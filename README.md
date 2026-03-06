@@ -13,6 +13,8 @@ This workflow runs on a daily schedule and monitors any number of news or announ
 - Items with a visible date, title, and link
 
 ---
+![Workflow Screenshot](images/workflow-screenshot.png)
+---
 
 ## 🏗️ Architecture
 
