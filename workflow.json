@@ -1,0 +1,1688 @@
+{
+  "name": "News Scraper - Multi-Source Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// SITE CONFIGURATION\n// Add or remove sites by editing this list.\n// Each entry defines one news/announcement source to monitor.\n// ============================================================\n\nconst sites = [\n\n  // ----- EXAMPLE SITE A -----\n  // Replace with the real URL and a sample HTML snippet from that page.\n  // The HTML snippet is used by GPT to auto-generate a Python parser.\n  {\n    tarih: \"2025-01-01\",            // Date filter: only collect news from this date (YYYY-MM-DD)\n    eşleşen_tarih_yoksa: \"hepsini\", // If no matching date found: \"hepsini\" = collect all\n    site_ismi: \"site_a\",            // Short name / identifier for this source\n    ana_url: \"https://example-site-a.com/news\",  // The news listing page URL\n    site_yapısı: `\n      <!-- Paste a representative HTML snippet from the news listing page here.\n           It should contain at least one news item with its date, title and link.\n           GPT will use this structure to generate a parser automatically. -->\n      <div class=\"news-item\">\n        <span class=\"date\">01.01.2025</span>\n        <a href=\"/news/example-article\" class=\"news-link\">\n          <h2>Example News Title</h2>\n        </a>\n      </div>\n    `\n  },\n\n  // ----- EXAMPLE SITE B -----\n  {\n    tarih: \"2025-01-01\",\n    eşleşen_tarih_yoksa: \"hepsini\",\n    site_ismi: \"site_b\",\n    ana_url: \"https://example-site-b.org/announcements\",\n    site_yapısı: `\n      <!-- Another example structure — replace with the real HTML from your target site -->\n      <li class=\"announcement-row\">\n        <time datetime=\"2025-01-01\">January 1, 2025</time>\n        <a href=\"/announcements/123\">Announcement Title</a>\n      </li>\n    `\n  },\n\n];\n\n// ============================================================\n// n8n output — returns each site as a separate item\n// ============================================================\nreturn sites;\n\n// --- Utility helpers (optional, not used by the main flow) ---\nfunction getSite(index) {\n    return (index >= 0 && index < sites.length) ? sites[index] : null;\n}\nfunction getSiteCount() {\n    return sites.length;\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7408,
+        208
+      ],
+      "id": "391ca057-7c43-4a7b-a645-76ba07b97f22",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  COUNT(*) as toplam_kayit,\n  COUNT(DISTINCT source) as benzersiz_kaynak,\n  MAX(created_at) as son_kayit,\n  MIN(created_at) as ilk_kayit,\n  AVG(LENGTH(content)) as ortalama_icerik_uzunlugu\nFROM public.titck_reports",
+        "options": {}
+      },
+      "id": "eda60fcc-b099-40d7-bd2b-188602927850",
+      "name": "📈 İstatistikler",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -4864,
+        864
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const stats = $input.first().json;\n\nconsole.log('\\n📊 GENEL İSTATİSTİKLER');\nconsole.log('═'.repeat(50));\nconsole.log(`📄 Toplam Kayıt: ${stats.toplam_kayit}`);\nconsole.log(`🏷️  Benzersiz Kaynak: ${stats.benzersiz_kaynak}`);\nconsole.log(`📅 İlk Kayıt: ${stats.ilk_kayit}`);\nconsole.log(`🕐 Son Kayıt: ${stats.son_kayit}`);\nconsole.log(`📝 Ort. İçerik Uzunluğu: ${Math.round(stats.ortalama_icerik_uzunlugu)} karakter`);\nconsole.log('═'.repeat(50));\n\nreturn [$input.first()];"
+      },
+      "id": "f6602630-e47c-4da1-861e-b2efd35b5f54",
+      "name": "📊 İstatistik Göster",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4688,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM public.titck_reports \nWHERE id = {{ $json.delete_id }}",
+        "options": {}
+      },
+      "id": "9e4f4925-f773-43ca-bf59-fd40826dc4d2",
+      "name": "🗑️ Kayıt Sil",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -5280,
+        1072
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Silme işlemi için ID'leri listele\nconst deleteId = $json.delete_id;\n\nif (deleteId) {\n  console.log(`✅ ID ${deleteId} başarıyla silindi!`);\n  \n  // Son verileri tekrar getir\n  return [{ json: { action: 'deleted', id: deleteId } }];\n} else {\n  console.log('❌ Silinecek ID belirtilmedi!');\n  return [{ json: { error: 'ID gerekli' } }];\n}"
+      },
+      "id": "5157a83b-ae2d-4150-b702-112e02d410aa",
+      "name": "✅ Silme Onayı",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5072,
+        1072
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.titck_reports \nSET \n  title = '{{ $json.title }}',\n  url = '{{ $json.url }}',\n  source = '{{ $json.source }}',\n  content = '{{ $json.content }}',\n  crawled_date = '{{ $json.crawled_date }}'\nWHERE id = {{ $json.id }}",
+        "options": {}
+      },
+      "id": "53c35791-2033-4b3b-b2eb-88482d4a169d",
+      "name": "✏️ Kayıt Güncelle",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -4672,
+        1072
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "TRUNCATE TABLE public.titck_reports RESTART IDENTITY",
+        "options": {}
+      },
+      "id": "335eda9d-972e-4c71-a383-6e808dd59582",
+      "name": "🚨 Tümünü Temizle",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -4864,
+        1072
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d90262a4-b4e1-49df-a094-a4e9afbca492",
+              "name": "tarih",
+              "value": "={{ $now.format(\"yyyy-MM-dd\") }}",
+              "type": "string"
+            },
+            {
+              "id": "7808d3a1-14b5-4813-a935-405ae629df71",
+              "name": "eşleşen tarih yoksa",
+              "value": "hepsini ",
+              "type": "string"
+            },
+            {
+              "id": "eab5f845-9a01-46ea-b91a-21215e2bbc92",
+              "name": "site yapısı",
+              "value": "={{ $json['site_yapısı'] }}",
+              "type": "string"
+            },
+            {
+              "id": "4d05203c-5ba0-4e05-afed-c843c8526213",
+              "name": "ana_url",
+              "value": "={{ $json.ana_url }}",
+              "type": "string"
+            },
+            {
+              "id": "f4f83fd8-2b9c-4e6b-bd4b-c96adb4d524b",
+              "name": "ornek kod",
+              "value": "\"from bs4 import BeautifulSoup\n\ndef extract_links_by_date(html_content, target_date):\n    \"\"\"\n    Parse the HTML of a news listing page and return items matching target_date.\n    \n    Args:\n        html_content (str): Raw HTML of the page\n        target_date (str): Date string in YYYY-MM-DD format\n    \n    Returns:\n        list[dict]: List of {title, link} dicts, or empty string if nothing found\n    \"\"\"\n    soup = BeautifulSoup(html_content, 'html.parser')\n    results = []\n    # TODO: adjust selectors to match your target site structure\n    items = soup.find_all('div', class_='news-item')\n    for item in items:\n        date_el = item.find('span', class_='date')\n        if not date_el:\n            continue\n        # Normalize date to YYYY-MM-DD before comparing\n        date_text = date_el.get_text(strip=True)\n        if date_text == target_date:\n            link_tag = item.find('a')\n            title_tag = item.find(['h1','h2','h3'])\n            title = title_tag.get_text(strip=True) if title_tag else ''\n            link = link_tag.get('href', '') if link_tag else ''\n            results.append({'title': title, 'link': link})\n    return results if results else \"\"",
+              "type": "string"
+            },
+            {
+              "id": "377c6e13-bd2f-4499-a680-c28b7e558ae3",
+              "name": "site_ismi",
+              "value": "={{ $json.site_ismi }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -6960,
+        208
+      ],
+      "id": "29bd8984-cd60-4fb4-9098-00af230f58ab",
+      "name": "set_url_tarih"
+    },
+    {
+      "parameters": {
+        "documentType": "image_url",
+        "options": {
+          "batch": false
+        }
+      },
+      "type": "n8n-nodes-base.mistralAi",
+      "typeVersion": 1,
+      "position": [
+        -3664,
+        112
+      ],
+      "id": "89e54f6c-1948-4ac8-8f63-a26dd9b09ffe",
+      "name": "Extract text3",
+      "credentials": {
+        "mistralCloudApi": {
+          "name": "Mistral Cloud account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -7616,
+        208
+      ],
+      "id": "eb15c91d-79b0-4546-9c33-76a4fe025800",
+      "name": "günlük veri otomasyonu1"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.format }}",
+                    "rightValue": "document",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "bd10f937-8860-401a-a3e7-76f4830d58b1"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "117a2a94-2340-4710-a49d-74e9341630fd",
+                    "leftValue": "={{ $json.format }}",
+                    "rightValue": "page",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -5008,
+        96
+      ],
+      "id": "3d8dd405-1a9e-40f7-ba34-e4ee9efef76a",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "inputType": "url",
+        "url": "={{ $json.link }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mistralAi",
+      "typeVersion": 1,
+      "position": [
+        -4576,
+        -32
+      ],
+      "id": "cd697a1e-8354-4562-8e32-07f2ff542858",
+      "name": "Extract text4",
+      "credentials": {
+        "mistralCloudApi": {
+          "name": "Mistral Cloud account 3"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "crop",
+        "dataPropertyName": "=data",
+        "width": 1920,
+        "height": 1000,
+        "positionY": "={{ $json.y }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.editImage",
+      "typeVersion": 1,
+      "position": [
+        -3872,
+        112
+      ],
+      "id": "572ccf9b-7dce-4d26-9b58-7b30d52201a5",
+      "name": "Edit Image2"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// WORKFLOW ADIMI 2: Code node - Segment koordinatlarını hesapla\n\nconst imageWidth = $input.first().json.size.width;\nconst imageHeight = $input.first().json.size.height;\n\nconst segmentSize = 950;\nconst overlap = 50;\n\n// Segment koordinatlarını hesapla\nconst segments = [];\nlet currentY = 0;\nlet segmentIndex = 0;\n\nwhile (currentY < imageHeight) {\n    const remainingHeight = imageHeight - currentY;\n    let segmentHeight;\n    \n    if (remainingHeight <= segmentSize) {\n        segmentHeight = remainingHeight;\n    } else if (remainingHeight < segmentSize + overlap) {\n        segmentHeight = Math.ceil(remainingHeight / 2);\n    } else {\n        segmentHeight = segmentSize;\n    }\n    \n    segments.push({\n        index: segmentIndex,\n        x: 0,\n        y: currentY,\n        width: Math.min(segmentSize, imageWidth),\n        height: segmentHeight,\n        originalWidth: imageWidth,\n        originalHeight: imageHeight\n    });\n    \n    if (remainingHeight <= segmentSize) break;\n    currentY += segmentHeight - overlap;\n    segmentIndex++;\n}\n\n// Her segment için output oluştur\nreturn segments.map(segment => ({\n    json: segment,\n    binary: $input.first().binary // Original binary data'yı kopyala\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4128,
+        112
+      ],
+      "id": "bdb03c32-a197-4c48-8e8a-117152d7ebc2",
+      "name": "Code15"
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "extractedText",
+              "renameField": true,
+              "outputFieldName": "site_text"
+            }
+          ]
+        },
+        "options": {
+          "mergeLists": true
+        }
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        -3344,
+        112
+      ],
+      "id": "72981a49-b857-4c11-9f57-763919667124",
+      "name": "Aggregate2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node (İç Aggregate'den sonra)\nconst items = $input.all();\n\n// Puppeteer node'undan URL'yi çek (önceki node'lar arasında ara)\nlet siteUrl = $('Puppeteer2').first().json.url;\n\nconst siteText = $('Aggregate2').first().json.site_text;\nconst pdf_content=$input.first().json.pdf_content || \"\";\nconst title=$('Loop Over Items2').first().json.title\nconst source=$('set_url_tarih').first().json.site_ismi\nconst date=$('set_url_tarih').first().json.tarih\nconst pdf_link=$input.first().json.pdf_url || \"\";\nreturn [{\n    json: {\n        title:title,\n        url:siteUrl,\n        source:source,\n        content: siteText+\",\"+pdf_link+\",\"+pdf_content,\n        date_crawled_dat:date\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3136,
+        304
+      ],
+      "id": "60c48564-6b0f-4df4-83b4-2f443160ada6",
+      "name": "Code16"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// PDF'den gelen URL'yi al\nconst pdfUrl =$('Switch').first().json.link;\n\n// OCR'dan çıkan metni al\nconst ocrText = $input.first().json.extractedText;\nconst title=$('Loop Over Items2').first().json.title\nconst source=$('set_url_tarih').first().json.site_ismi\nconst date=$('set_url_tarih').first().json.tarih\nreturn [{\n    json: {\n        title:title,\n        url: pdfUrl,\n        source:source,\n        content: pdfUrl +\",\"+ ocrText,\n        date_crawled_dat:date\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3968,
+        -16
+      ],
+      "id": "dd4d967f-2300-436a-849f-6485eaa56f99",
+      "name": "Code17"
+    },
+    {
+      "parameters": {
+        "operation": "information"
+      },
+      "type": "n8n-nodes-base.editImage",
+      "typeVersion": 1,
+      "position": [
+        -4336,
+        112
+      ],
+      "id": "aa5a43ec-7043-442e-ac85-cae131abafc4",
+      "name": "Edit Image3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v1/scrape",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_FIRECRAWL_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{ $('Puppeteer2').item.json.url }}\",\n  \"formats\": [\"json\"],\n  \"excludeTags\": [\"iframe\", \"nav\", \"header\", \"footer\",\"li.link\",\"a.d-block.standalone\"],\n  \"onlyMainContent\": true,\n  \"jsonOptions\": {\n    \"prompt\": \"verdiğim url deki sitenin haber verisi içeren kısımlarındaki pdf ve docx linklerni getirmeni istiyorum.pdf veya docx ile bitmeli .pdf veya .docx ile bitmeyen hiçbir link getirme. eğer aynı pdfin farklı dillerde olan versiyonları varsa sadece ana pdf i getiriceksin.Herhangi bir pdf linki bulamazsan empty döndür\",\n    \"schema\": {\n      \"type\": \"array\",\n      \"description\": \"Array of objects with {url, format} for PDF files found on the page. Empty array if no PDFs found.\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"url\": {\n            \"type\": \"string\",\n            \"description\": \"Absolute canonical PDF URL ending with .pdf\"\n          },\n          \"format\": {\n            \"type\": \"string\",\n            \"description\": \"PDF content type classification\"\n          }\n        },\n        \"required\": [\"url\", \"format\"]\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "f955c1c8-472c-4ee7-93b3-df47b593f596",
+      "name": "scrape_url5",
+      "type": "n8n-nodes-base.httpRequest",
+      "maxTries": 3,
+      "position": [
+        -4336,
+        304
+      ],
+      "retryOnFail": true,
+      "typeVersion": 4.2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "inputType": "url",
+        "url": "={{ $json.url }}",
+        "options": {
+          "batch": false
+        }
+      },
+      "type": "n8n-nodes-base.mistralAi",
+      "typeVersion": 1,
+      "position": [
+        -3344,
+        448
+      ],
+      "id": "98d4da62-0e5d-4485-9b7d-27d9ac8b9ca1",
+      "name": "Extract text5",
+      "credentials": {
+        "mistralCloudApi": {
+          "name": "Mistral Cloud account 3"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Firecrawl response'unun yapısını detaylı incele\nconst inputData = $input.first();\ntry {\n  console.log('Full response keys:', Object.keys(inputData.json));\n  if (inputData.json.data) {\n    console.log('Data field keys:', Object.keys(inputData.json.data));\n    console.log('Data field content:', JSON.stringify(inputData.json.data, null, 2));\n    // Data field'ının tüm property'lerini kontrol et\n    const dataKeys = Object.keys(inputData.json.data);\n    let jsonData = null;\n    let foundIn = '';\n    // Her key'i kontrol et\n    for (const key of dataKeys) {\n      const value = inputData.json.data[key];\n      console.log('Checking data.' + key + ':', typeof value, Array.isArray(value));\n      if (Array.isArray(value)) {\n        jsonData = value;\n        foundIn = 'data.' + key;\n        break;\n      } else if (typeof value === 'string') {\n        try {\n          const parsed = JSON.parse(value);\n          if (Array.isArray(parsed)) {\n            jsonData = parsed;\n            foundIn = 'data.' + key + ' (parsed from string)';\n            break;\n          }\n        } catch (e) {\n          console.log(`data.${key} is string but not valid JSON`);\n        }\n      }\n    }\n    if (jsonData && Array.isArray(jsonData)) {\n      console.log(`Found array in ${foundIn} with ${jsonData.length} items`);\n      // Her item'ı workflow item'ı olarak döndür\n      return jsonData.map((item, index) => ({\n        json: {\n          url: item.url,\n          format: item.format,\n          sourceURL: inputData.json.sourceURL || inputData.json.url,\n          scrapedAt: new Date().toISOString(),\n          itemIndex: index,\n          foundIn: foundIn\n        }\n      }));\n    } else {\n      // Array bulunamadı - tüm detayları döndür\n      return [{\n        json: {\n          error: 'No array found in data field',\n          dataKeys: dataKeys,\n          dataContent: inputData.json.data,\n          fullResponse: inputData.json,\n          dataFieldType: typeof inputData.json.data,\n          suggestion: 'Check the dataContent to see the actual structure'\n        }\n      }];\n    }\n  } else {\n    return [{\n      json: {\n        error: 'No data field found',\n        responseKeys: Object.keys(inputData.json),\n        fullResponse: inputData.json\n      }\n    }];\n  }\n} catch (error) {\n  return [{\n    json: {\n      error: 'Unexpected error: ' + error.message,\n      fullResponse: inputData.json,\n      stack: error.stack\n    }\n  }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3872,
+        320
+      ],
+      "id": "637b3855-286f-40ca-9140-a39d306ab561",
+      "name": "Code18",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "extractedText",
+              "renameField": true,
+              "outputFieldName": "pdf_content"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        -3344,
+        304
+      ],
+      "id": "d9f37a59-c3bb-4b06-a828-8014a53fd94c",
+      "name": "Aggregate3"
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -3504,
+        384
+      ],
+      "id": "a5176e04-2dd7-473d-b6d8-758fe8ed3b74",
+      "name": "Wait2",
+      "webhookId": "66902ce1-67a8-4c0f-a2e2-2156793c3100"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Sen bir link çıkarıcı kodu yazıcısın. Sana verdiğim haber sitesi bilgilerinin saklandığı html yapısına göre bana basit python kodu üretmeni istiyorum. Bu kod verilen html içeriğini parse edecek ve sana verdiğim yapıya uygun tasarlanmış kod ile istenilen tarihe uygun olanlar listeye kaydedilip çıktı verilicek.Eğer istenilen tarihte haber linki yoksa boş dönsün ve sadece istenilen tarihteki haberler çekilsin kodda o kısımda hata yapmıyorsun sadece istenilen tarihteki haber linklerini çeken kodu yaz ve hiçbir uygun tarihteki haberi kaçırma.HTML içeriği zaten var olacak, sen sadece parse eden kodu yaz.html_content = \"\"\"PUT_YOUR_HTML_CONTENT_HERE\"\"\"gibi şeyler yazma ben en altta html içeriğini koda eklicem sakın sen html içeriği olarak bişey yazma.Kod bulunan linklerin titleınıda döndürücek.Eğer hiçbir link uymuyorsa çıktı olarak \"\" vericeksin. Kod bulunan linkleri return etmeli tittle'ları ile birlikte. Çıktı sadece python kodu olsun başka birşey olmasın. çıktı direkt python kodu olarak kullanılacak.sadece bir çıktı ver.örnek kod:{{ $json['ornek kod'] }}",
+              "role": "system"
+            },
+            {
+              "content": "=sitenin url'si bu: {{ $json.ana_url }} sitenin linklerin çekileceği yapı bu: {{ $json['site yapısı'] }} filtrelencek tarihte bu: {{ $json.tarih }} özel kod üret \n"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        -6768,
+        208
+      ],
+      "id": "05529daa-865b-44b3-8ad4-4af5214b98e0",
+      "name": "Message a model1",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "credentials": {
+        "openAiApi": {
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v1/scrape",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_FIRECRAWL_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{ $('set_url_tarih').item.json.ana_url }}\",\n  \"formats\": [\"html\"],\n  \"excludeTags\": [\"iframe\", \"nav\", \"header\", \"footer\",\"checkbox\"],\n  \"onlyMainContent\": true,\n  \"removeBase64Images\": true,\n  \"waitFor\": 3000,\n  \"actions\": [\n    {\n      \"type\": \"wait\",\n      \"milliseconds\": 2000  \n    },\n    {\n      \"type\": \"scroll\",\n      \"direction\": \"down\",\n      \"amount\": 1000 \n    },\n    {\n      \"type\": \"wait\",\n      \"milliseconds\": 2000  \n    }\n ]\n}",
+        "options": {}
+      },
+      "id": "57440ba6-dc1d-4b3d-b551-6aa745232e83",
+      "name": "scrape_url6",
+      "type": "n8n-nodes-base.httpRequest",
+      "maxTries": 3,
+      "position": [
+        -6448,
+        208
+      ],
+      "retryOnFail": true,
+      "typeVersion": 4.2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "command": "=python3 << 'EOF'\n{{ $('Message a model1').item.json.message.content.code || $('Message a model1').item.json.message.refusal || $('Message a model1').item.json.message.content.python_code || $('Message a model1').item.json.message.content.python || $('Message a model1').item.json.message.content.output}}\nhtml_content1=\"\"\"\n{{ $json.html_part }}\n\"\"\"\ntarget_date=\"{{ $('set_url_tarih').item.json.tarih }}\"\nresult1 = extract_links_by_date(html_content1,target_date)\nprint(result1)\n\nEOF"
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -5824,
+        224
+      ],
+      "id": "8a355fc9-8b0a-44d9-88ae-af67cd9e9a34",
+      "name": "Execute Command3",
+      "executeOnce": false,
+      "retryOnFail": true,
+      "alwaysOutputData": false,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "const htmlContent = $input.first().json.data.html;\nconst MAX_CHUNK_SIZE = 50000;\n\nfunction splitHtmlContentSafe(content, maxSize) {\n  const chunks = [];\n  let partIndex = 1;\n  \n  // HTML'i DOM parser ile parse et (eğer mümkünse)\n  try {\n    // Basit HTML tag matcher regex'i\n    const htmlTagRegex = /<\\/?[^>]+(>|$)/g;\n    const tags = [...content.matchAll(htmlTagRegex)];\n    \n    // Güvenli bölme noktalarını bul\n    const safeSplitPoints = findSafeSplitPoints(content, maxSize);\n    \n    let currentPos = 0;\n    \n    for (let i = 0; i < safeSplitPoints.length; i++) {\n      const splitPoint = safeSplitPoints[i];\n      const chunk = content.substring(currentPos, splitPoint);\n      \n      chunks.push({\n        html_part: chunk,\n        part_number: partIndex,\n        is_last_part: i === safeSplitPoints.length - 1,\n        chunk_size: chunk.length,\n        total_original_length: content.length,\n        split_at_position: splitPoint,\n        split_type: getSplitType(content, splitPoint)\n      });\n      \n      currentPos = splitPoint;\n      partIndex++;\n    }\n    \n    // Son parçayı işaretle\n    if (chunks.length > 0) {\n      chunks[chunks.length - 1].total_parts = chunks.length;\n    }\n    \n    return chunks;\n    \n  } catch (error) {\n    console.log(\"HTML parsing hatası, basit bölme kullanılıyor:\", error);\n    return fallbackSplit(content, maxSize);\n  }\n}\n\nfunction findSafeSplitPoints(content, maxSize) {\n  const splitPoints = [];\n  let currentPos = 0;\n  \n  while (currentPos < content.length) {\n    let targetPos = Math.min(currentPos + maxSize, content.length);\n    \n    if (targetPos >= content.length) {\n      splitPoints.push(content.length);\n      break;\n    }\n    \n    // Güvenli bölme noktası ara\n    let safeSplitPos = findBestSplitPoint(content, currentPos, targetPos);\n    splitPoints.push(safeSplitPos);\n    currentPos = safeSplitPos;\n  }\n  \n  return splitPoints;\n}\n\nfunction findBestSplitPoint(content, start, target) {\n  let bestPos = target;\n  \n  // Öncelik sırası:\n  // 1. Closing tag sonrası (</div>, </p>, vs.)\n  // 2. Opening tag öncesi (<div>, <p>, vs.)\n  // 3. Satır sonu\n  // 4. Boşluk karakteri\n  \n  // 1000 karakter geriye git ve en iyi bölme noktasını ara\n  const searchStart = Math.max(start, target - 1000);\n  \n  // Closing tag sonrası ara\n  for (let i = target; i >= searchStart; i--) {\n    if (content[i] === '>' && isClosingTag(content, i)) {\n      return i + 1;\n    }\n  }\n  \n  // Opening tag öncesi ara\n  for (let i = target; i >= searchStart; i--) {\n    if (content[i] === '<' && isOpeningTag(content, i)) {\n      return i;\n    }\n  }\n  \n  // Satır sonu ara\n  for (let i = target; i >= searchStart; i--) {\n    if (content[i] === '\\n') {\n      return i + 1;\n    }\n  }\n  \n  // Boşluk ara\n  for (let i = target; i >= searchStart; i--) {\n    if (content[i] === ' ') {\n      return i + 1;\n    }\n  }\n  \n  return target;\n}\n\nfunction isClosingTag(content, pos) {\n  // '>' pozisyonundan geriye git ve '</tag>' yapısını kontrol et\n  let i = pos - 1;\n  while (i >= 0 && content[i] !== '<') {\n    i--;\n  }\n  return i >= 0 && content[i + 1] === '/';\n}\n\nfunction isOpeningTag(content, pos) {\n  // '<' pozisyonundan ileriye git ve '<tag>' yapısını kontrol et\n  if (content[pos] !== '<') return false;\n  if (pos + 1 < content.length && content[pos + 1] === '/') return false; // Closing tag değil\n  if (pos + 1 < content.length && content[pos + 1] === '!') return false; // Comment değil\n  return true;\n}\n\nfunction getSplitType(content, pos) {\n  if (pos >= content.length) return 'end';\n  if (content[pos - 1] === '>') return 'after_closing_tag';\n  if (content[pos] === '<') return 'before_opening_tag';\n  if (content[pos] === '\\n') return 'line_break';\n  if (content[pos] === ' ') return 'whitespace';\n  return 'character';\n}\n\nfunction fallbackSplit(content, maxSize) {\n  // Basit fallback - sadece kelime sınırlarında böl\n  const chunks = [];\n  let currentPos = 0;\n  let partIndex = 1;\n  \n  while (currentPos < content.length) {\n    let endPos = Math.min(currentPos + maxSize, content.length);\n    \n    if (endPos < content.length) {\n      // Kelime sınırı ara\n      while (endPos > currentPos && \n             content[endPos] !== ' ' && \n             content[endPos] !== '\\n' && \n             content[endPos] !== '\\t') {\n        endPos--;\n      }\n      \n      if (endPos === currentPos) {\n        endPos = Math.min(currentPos + maxSize, content.length);\n      }\n    }\n    \n    const chunk = content.substring(currentPos, endPos);\n    chunks.push({\n      html_part: chunk,\n      part_number: partIndex,\n      is_last_part: endPos >= content.length,\n      chunk_size: chunk.length,\n      total_original_length: content.length,\n      split_type: 'fallback'\n    });\n    \n    currentPos = endPos;\n    partIndex++;\n  }\n  \n  if (chunks.length > 0) {\n    chunks[chunks.length - 1].total_parts = chunks.length;\n  }\n  \n  return chunks;\n}\n\n// Alternatif: Semantic bölme (belirli HTML elementlerine göre)\nfunction splitByElements(content, maxSize) {\n  const chunks = [];\n  let partIndex = 1;\n  \n  // Ana HTML bloklarını bul (div, section, article, vs.)\n  const blockElements = ['div', 'section', 'article', 'main', 'header', 'footer', 'nav'];\n  const blockRegex = new RegExp(`<(${blockElements.join('|')})[^>]*>`, 'gi');\n  \n  let matches = [...content.matchAll(blockRegex)];\n  matches.push({ index: content.length }); // Son eleman\n  \n  let currentPos = 0;\n  let currentChunk = '';\n  \n  for (let i = 0; i < matches.length; i++) {\n    const nextBlockStart = matches[i].index;\n    const segmentContent = content.substring(currentPos, nextBlockStart);\n    \n    if (currentChunk.length + segmentContent.length <= maxSize) {\n      currentChunk += segmentContent;\n    } else {\n      if (currentChunk.length > 0) {\n        chunks.push({\n          html_part: currentChunk,\n          part_number: partIndex,\n          is_last_part: false,\n          chunk_size: currentChunk.length,\n          total_original_length: content.length,\n          split_type: 'semantic_block'\n        });\n        partIndex++;\n      }\n      currentChunk = segmentContent;\n    }\n    \n    currentPos = nextBlockStart;\n  }\n  \n  // Son parçayı ekle\n  if (currentChunk.length > 0) {\n    chunks.push({\n      html_part: currentChunk,\n      part_number: partIndex,\n      is_last_part: true,\n      chunk_size: currentChunk.length,\n      total_original_length: content.length,\n      total_parts: partIndex,\n      split_type: 'semantic_block'\n    });\n  }\n  \n  return chunks;\n}\n\n// Ana fonksiyon - HTML içeriğini güvenli şekilde böl\nconst htmlChunks = splitHtmlContentSafe(htmlContent, MAX_CHUNK_SIZE);\n\n\n// Sonuçları döndür\nreturn htmlChunks.map(chunk => ({ json: chunk }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6240,
+        208
+      ],
+      "id": "9abfcea7-b58e-4e05-9cd7-e591d2e834df",
+      "name": "Code20"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": "={{$prevNode.name === \"Code20\"}}"
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -6032,
+        208
+      ],
+      "id": "15399c99-b90c-4b0d-9cb7-1b6b35378290",
+      "name": "Loop Over Items3",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5cc899b6-61fc-4b3c-9618-9e7201d73726",
+              "name": "ornekPdfler",
+              "value": "https://example.com/sample.pdf",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3136,
+        112
+      ],
+      "id": "0eaa1910-ee33-40af-a019-6285da4c8112",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code Node (Node.js) — async IIFE ile güvenli yürütme\nreturn await (async () => {\n  // 0) Yardımcı: Python list[str->dict] çıktısını sağlam JSON'a çevir - DÜZELTİLMİŞ\n  function parsePythonListString(s) {\n    if (typeof s !== 'string') throw new Error('parsePythonListString input is not string');\n    let cleaned = s.trim();\n\n    // Olası code-block işaretlerini temizle\n    cleaned = cleaned.replace(/^```(?:json|python)?\\s*/i, '').replace(/```$/i, '');\n\n    // Python -> JSON dönüşümleri\n    cleaned = cleaned\n      .replace(/\\bNone\\b/g, 'null')\n      .replace(/\\bTrue\\b/g, 'true')\n      .replace(/\\bFalse\\b/g, 'false');\n\n    // DÜZELTİLMİŞ: Önce escape edilmiş tırnakları geçici placeholder ile koru\n    const ESCAPED_QUOTE_PLACEHOLDER = '__ESCAPED_QUOTE__';\n    cleaned = cleaned.replace(/\\\\\"/g, ESCAPED_QUOTE_PLACEHOLDER);\n    \n    // Sonra tek tırnakları çift tırnağa çevir\n    cleaned = cleaned.replace(/'/g, '\"');\n    \n    // Placeholder'ları geri escape edilmiş çift tırnak yap\n    cleaned = cleaned.replace(new RegExp(ESCAPED_QUOTE_PLACEHOLDER, 'g'), '\\\\\"');\n\n    // İçindeki çift tırnakları escape et - string değerleri içindeki çift tırnaklar için\n    // Bu daha karmaşık bir regex ile yapılmalı, basit yaklaşım:\n    // \"title\": \"some \"quoted\" text\" -> \"title\": \"some \\\"quoted\\\" text\"\n    cleaned = cleaned.replace(/\":\\s*\"([^\"]*)\"([^\"]*)\"([^\"]*?)\"/g, '\": \"$1\\\\\"$2\\\\\"$3\"');\n\n    // Fazla virgül / satır sonları gibi minör temizlikler\n    cleaned = cleaned.replace(/\\n+/g, ' ').replace(/,\\s*]/g, ']').replace(/,\\s*}/g, '}');\n\n    // Son olarak JSON.parse dene\n    return JSON.parse(cleaned);\n  }\n\n  // GELİŞTİRİLMİŞ Python dict string parser\n  function parseAdvancedPythonDict(s) {\n    if (typeof s !== 'string') throw new Error('Input is not string');\n    \n    let cleaned = s.trim();\n    \n    // Code block işaretlerini temizle\n    cleaned = cleaned.replace(/^```(?:json|python)?\\s*/i, '').replace(/```$/i, '');\n    \n    // Python özel değerleri\n    cleaned = cleaned\n      .replace(/\\bNone\\b/g, 'null')\n      .replace(/\\bTrue\\b/g, 'true')\n      .replace(/\\bFalse\\b/g, 'false');\n    \n    // GELİŞTİRİLMİŞ Manual parsing yaklaşımı\n    try {\n      const items = [];\n      \n      // Tüm dict'leri bul - daha esnek regex\n      // Hem tek hem çift tırnak kombinasyonlarını yakalar\n      const dictPattern = /\\{\\s*['\"]title['\"]\\s*:\\s*(['\"])((?:(?!\\1)[^\\\\]|\\\\.)*)?\\1\\s*,\\s*['\"]link['\"]\\s*:\\s*(['\"])((?:(?!\\3)[^\\\\]|\\\\.)*)?\\3\\s*\\}/g;\n      \n      let match;\n      while ((match = dictPattern.exec(cleaned)) !== null) {\n        const title = match[2] || '';\n        const link = match[4] || '';\n        \n        items.push({\n          title: title.replace(/\\\\\"/g, '\"').replace(/\\\\'/g, \"'\"), // Escape edilmiş tırnakları düzelt\n          link: link.replace(/\\\\\"/g, '\"').replace(/\\\\'/g, \"'\")\n        });\n      }\n      \n      if (items.length > 0) {\n        return items;\n      }\n      \n      // Alternatif yaklaşım: Daha basit regex'ler\n      const simplePatterns = [\n        // Pattern 1: Her ikisi de tek tırnak\n        /\\{\\s*'title'\\s*:\\s*'([^']+)'\\s*,\\s*'link'\\s*:\\s*'([^']+)'\\s*\\}/g,\n        // Pattern 2: Her ikisi de çift tırnak  \n        /\\{\\s*\"title\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"link\"\\s*:\\s*\"([^\"]+)\"\\s*\\}/g,\n        // Pattern 3: Title çift, link tek\n        /\\{\\s*'title'\\s*:\\s*\"([^\"]+)\"\\s*,\\s*'link'\\s*:\\s*'([^']+)'\\s*\\}/g,\n        // Pattern 4: Title tek, link çift\n        /\\{\\s*'title'\\s*:\\s*'([^']+)'\\s*,\\s*'link'\\s*:\\s*\"([^\"]+)\"\\s*\\}/g,\n      ];\n      \n      for (let i = 0; i < simplePatterns.length; i++) {\n        const pattern = simplePatterns[i];\n        \n        // Reset regex\n        pattern.lastIndex = 0;\n        \n        while ((match = pattern.exec(cleaned)) !== null) {\n          const title = match[1] || '';\n          const link = match[2] || '';\n          \n          items.push({\n            title: title,\n            link: link\n          });\n        }\n        \n        if (items.length > 0) {\n          break;\n        }\n      }\n      \n      if (items.length > 0) {\n        return items;\n      }\n      \n      // Son çare: Manuel string splitting\n      \n      // Array bracket'larını temizle\n      let arrayContent = cleaned.replace(/^\\[|\\]$/g, '').trim();\n      \n      // Dict'leri split et - basit yaklaşım\n      const dictStrings = [];\n      let braceCount = 0;\n      let currentDict = '';\n      \n      for (let i = 0; i < arrayContent.length; i++) {\n        const char = arrayContent[i];\n        currentDict += char;\n        \n        if (char === '{') braceCount++;\n        else if (char === '}') {\n          braceCount--;\n          if (braceCount === 0) {\n            dictStrings.push(currentDict.trim());\n            currentDict = '';\n          }\n        }\n      }\n      \n      for (const dictStr of dictStrings) {\n        // Her dict string'ini ayrı ayrı parse et\n        const titleMatch = dictStr.match(/['\"]title['\"]:\\s*['\"]([^'\"]+)['\"]/);\n        const linkMatch = dictStr.match(/['\"]link['\"]:\\s*['\"]([^'\"]+)['\"]/);\n        \n        if (titleMatch && linkMatch) {\n          items.push({\n            title: titleMatch[1],\n            link: linkMatch[1]\n          });\n        }\n      }\n      \n      if (items.length > 0) {\n        return items;\n      }\n      \n      // Son çare: standart JSON parse\n      const standardCleaned = cleaned.replace(/'/g, '\"');\n      return JSON.parse(standardCleaned);\n      \n    } catch (e) {\n      throw new Error(`Could not parse Python dict string: ${e.message}`);\n    }\n  }\n\n  // 1) Girdi - TÜM STDOUT'LARI BİRLEŞTİR\n  \n  let allStdoutData = [];\n  let inputData = null;\n  \n  // Tüm input'ları kontrol et ve stdout verilerini topla\n  const allInputs = $input.all();\n  for (let i = 0; i < allInputs.length; i++) {\n    const currentInput = allInputs[i];\n    \n    // stdout alanını kontrol et ve biriktir\n    if (currentInput.json && currentInput.json.stdout && currentInput.json.stdout.trim() !== '') {\n      allStdoutData.push(currentInput.json.stdout);\n    }\n    \n    // Doğrudan json alanını kontrol et (array ise)\n    if (currentInput.json && Array.isArray(currentInput.json)) {\n      if (!inputData) inputData = currentInput.json;\n    }\n  }\n\n  // Eğer hiçbir veri bulunamazsa error döndür\n  if (allStdoutData.length === 0 && !inputData) {\n    return [{\n      json: {\n        error: 'Beklenmeyen format',\n        data: 'No stdout data found',\n        inputType: 'object',\n        message: 'Hiçbir stdout verisi bulunamadı. Python kodunun çıktı ürettiğinden emin olun.',\n        exitCode: 0,\n        stderr: '[empty]',\n        stdout: '[empty]',\n        debug: {\n          totalInputs: allInputs.length,\n          inputStructure: allInputs.map((inp, idx) => ({\n            index: idx,\n            hasJson: !!inp.json,\n            jsonType: inp.json ? typeof inp.json : null,\n            hasStdout: !!(inp.json && inp.json.stdout),\n            stdoutLength: inp.json && inp.json.stdout ? inp.json.stdout.length : 0\n          }))\n        }\n      }\n    }];\n  }\n\n  // Eğer stdout verileri varsa, bunları birleştir\n  if (allStdoutData.length > 0) {\n    // Her stdout'u ayrı ayrı parse et ve birleştir\n    let combinedArray = [];\n    for (let i = 0; i < allStdoutData.length; i++) {\n      try {\n        const stdoutData = allStdoutData[i];\n        const parsedData = parseAdvancedPythonDict(stdoutData);\n        if (Array.isArray(parsedData)) {\n          combinedArray = combinedArray.concat(parsedData);\n        }\n      } catch (e) {\n        // Parse hatası durumunda ham veriyi de göster\n        return [{\n          json: {\n            error: 'JSON parse hatası',\n            message: e.message,\n            hint: 'Python dictionary formatı düzgün parse edilemedi. Çift tırnak içindeki çift tırnaklar escape edilmeli.',\n            failedStdout: allStdoutData[i].substring(0, 500),\n            stdoutIndex: i,\n            totalStdoutCount: allStdoutData.length,\n            suggestion: 'Python kodunda title değerlerindeki çift tırnakları escape edin veya tek tırnak kullanın.'\n          }\n        }];\n      }\n    }\n    inputData = combinedArray;\n  }\n\n  // Eğer hiçbirinde veri bulunamazsa, ilk input'u al\n  if (!inputData) {\n    inputData = $input.first().json;\n  }\n\n  // 2) Python dictionary listesini parse et\n  let dataArray;\n  try {\n    if (typeof inputData === 'string') {\n      dataArray = parseAdvancedPythonDict(inputData);\n    } else if (Array.isArray(inputData)) {\n      dataArray = inputData;\n    } else {\n      return [{\n        json: {\n          error: 'Beklenmeyen format',\n          data: inputData,\n          inputType: typeof inputData,\n          exitCode: 0,\n          stderr: '[empty]',\n          stdout: '[empty]',\n          message: 'Input data array değil ve string de değil. Python kodunun list[dict] formatında çıktı ürettiğinden emin olun.'\n        }\n      }];\n    }\n  } catch (e) {\n    // Sorunu görünür kılmak için ilk 300 karakteri geri döndür\n    return [{\n      json: {\n        error: 'JSON parse hatası',\n        message: e.message,\n        hint: 'Python dictionary formatı parse edilemedi. Title içindeki çift tırnaklar sorun yaratmış olabilir.',\n        sample: typeof inputData === 'string' ? inputData.slice(0, 300) : String(inputData),\n        totalStdoutCount: allStdoutData.length,\n        fullInput: inputData,\n        suggestion: 'Python kodunda json.dumps() kullanarak düzgün JSON çıktısı üretin.'\n      }\n    }];\n  }\n\n  // Array kontrolü\n  if (!Array.isArray(dataArray)) {\n    return [{\n      json: {\n        error: 'Parse edilmiş veri array değil',\n        dataType: typeof dataArray,\n        data: dataArray,\n        totalStdoutProcessed: allStdoutData.length,\n        message: 'Parse sonucu array olmadı. Python kodunuz list döndürüyor mu?'\n      }\n    }];\n  }\n\n  // Boş array kontrolü\n  if (dataArray.length === 0) {\n    return [{\n      json: {\n        error: 'Beklenmeyen format',\n        data: 'Empty array',\n        inputType: 'array',\n        exitCode: 0,\n        stderr: '[empty]',\n        stdout: '[empty]',\n        message: 'Parse edilen array boş. Python kodunuz veri döndürüyor mu?'\n      }\n    }];\n  }\n\n  // 3) Link analiz fonksiyonu - DÜZELTİLMİŞ VERSİYON (aynı)\n  async function classifyLink(link) {\n    try {\n      \n      // URL'i parse et - n8n ortamında URL constructor olmayabilir, manuel parsing yapalım\n      let url, pathname, queryParams, hostname;\n      \n      try {\n        // Önce standart URL constructor'ı dene\n        url = new URL(link);\n        pathname = url.pathname.toLowerCase();\n        queryParams = (url.search || '').toLowerCase();\n        hostname = url.hostname;\n      } catch (urlError) {\n        // Manuel URL parsing\n        const linkLower = link.toLowerCase();\n        const protocolIndex = linkLower.indexOf('://');\n        if (protocolIndex === -1) {\n          pathname = link.toLowerCase();\n          queryParams = '';\n          hostname = '';\n        } else {\n          const afterProtocol = link.substring(protocolIndex + 3);\n          const pathIndex = afterProtocol.indexOf('/');\n          if (pathIndex === -1) {\n            hostname = afterProtocol.toLowerCase();\n            pathname = '/';\n            queryParams = '';\n          } else {\n            hostname = afterProtocol.substring(0, pathIndex).toLowerCase();\n            const pathAndQuery = afterProtocol.substring(pathIndex);\n            const queryIndex = pathAndQuery.indexOf('?');\n            if (queryIndex === -1) {\n              pathname = pathAndQuery.toLowerCase();\n              queryParams = '';\n            } else {\n              pathname = pathAndQuery.substring(0, queryIndex).toLowerCase();\n              queryParams = pathAndQuery.substring(queryIndex).toLowerCase();\n            }\n          }\n        }\n      }\n      \n      const fullUrl = link.toLowerCase(); // Tüm URL'i küçük harfe çevir\n\n      // 3.1 Uzantı analizi - DÜZELTİLMİŞ\n      const documentExtensions = ['.pdf', '.doc', '.docx', '.rtf', '.odt'];\n      const otherExtensions = ['.zip', '.rar', '.7z', '.tar', '.gz', '.xlsx', '.xls', '.csv', '.ppt', '.pptx', '.txt', '.xml', '.json'];\n\n      // Önce tam URL'de uzantı ara (query parametrelerinden önce)\n      for (const ext of documentExtensions) {\n        if (fullUrl.includes(ext)) {\n          return { format: 'document', confidence: 'high', method: 'extension', extension: ext };\n        }\n      }\n      \n      for (const ext of otherExtensions) {\n        if (fullUrl.includes(ext)) {\n          return { format: 'other', confidence: 'high', method: 'extension', extension: ext };\n        }\n      }\n\n      // Ayrıca pathname'de de kontrol et\n      for (const ext of documentExtensions) {\n        if (pathname.endsWith(ext)) {\n          return { format: 'document', confidence: 'high', method: 'extension', extension: ext };\n        }\n      }\n      \n      for (const ext of otherExtensions) {\n        if (pathname.endsWith(ext)) {\n          return { format: 'other', confidence: 'high', method: 'extension', extension: ext };\n        }\n      }\n\n      // 3.2 Pattern analizi - GELİŞTİRİLMİŞ\n      const documentPatterns = [\n        /\\/download.*\\.(pdf|doc|docx)\\b/i,\n        /\\/files?\\/.*\\.(pdf|doc|docx)\\b/i,\n        /\\/documents?\\/.*\\.(pdf|doc|docx)\\b/i,\n        /\\/(pdf|doc|document)\\b/i,\n        /[?&](file|download)=.*\\.(pdf|doc|docx)\\b/i,\n        /\\.(pdf|doc|docx)($|[?&#])/i, // URL sonunda veya query/fragment başlangıcında\n      ];\n      \n      const otherPatterns = [\n        /\\/download.*\\.(zip|xlsx?|csv|pptx?)\\b/i,\n        /\\/export\\b/i,\n        /\\/api\\/.*\\/(export|download)\\b/i,\n        /[?&](format|type)=(excel|csv|zip)\\b/i,\n        /[?&](export|download)=/i,\n        /\\.(zip|xlsx?|csv|pptx?)($|[?&#])/i,\n      ];\n\n      const fullUrlForPattern = pathname + queryParams;\n      \n      for (const p of documentPatterns) {\n        if (p.test(fullUrlForPattern)) {\n          return { format: 'document', confidence: 'medium', method: 'pattern' };\n        }\n      }\n      \n      for (const p of otherPatterns) {\n        if (p.test(fullUrlForPattern)) {\n          return { format: 'other', confidence: 'medium', method: 'pattern' };\n        }\n      }\n\n      // 3.3 Domain kuralları\n      const documentDomains = ['docs.', 'documents.', 'papers.', 'files.'];\n      const downloadDomains = ['download.', 'cdn.', 'assets.', 'static.'];\n      if (documentDomains.some(d => hostname.includes(d))) {\n        return { format: 'document', confidence: 'low', method: 'domain' };\n      }\n      if (downloadDomains.some(d => hostname.includes(d))) {\n        return { format: 'other', confidence: 'low', method: 'domain' };\n      }\n\n      // 3.4 HEAD isteği (AbortController ile timeout)\n      try {\n        const controller = new AbortController();\n        const id = setTimeout(() => controller.abort(), 5000);\n\n        const response = await fetch(link, {\n          method: 'HEAD',\n          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },\n          signal: controller.signal,\n        });\n        clearTimeout(id);\n\n        const contentType = response.headers.get('content-type') || '';\n        const contentDisposition = response.headers.get('content-disposition') || '';\n\n        const isDocCT =\n          contentType.includes('application/pdf') ||\n          contentType.includes('application/msword') ||\n          contentType.includes('application/vnd.openxmlformats-officedocument.wordprocessingml');\n        const isDocCD = /attachment/i.test(contentDisposition) && /\\.(pdf|doc|docx)\\b/i.test(contentDisposition);\n\n        if (isDocCT || isDocCD) {\n          return { format: 'document', confidence: 'very-high', method: 'content-type', contentType };\n        }\n\n        const isOtherCT =\n          contentType.includes('application/zip') ||\n          contentType.includes('application/vnd.ms-excel') ||\n          contentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml') ||\n          contentType.includes('application/octet-stream') ||\n          contentType.includes('application/x-download');\n        const isOtherCD = /attachment/i.test(contentDisposition);\n        if (isOtherCT || isOtherCD) {\n          return { format: 'other', confidence: 'very-high', method: 'content-type', contentType };\n        }\n\n        if (contentType.includes('text/html') || contentType.includes('text/plain')) {\n          return { format: 'page', confidence: 'very-high', method: 'content-type', contentType };\n        }\n      } catch (headErr) {\n        // HEAD başarısızsa devam\n      }\n\n      // 3.5 Web sayfası heuristikleri\n      const webPatterns = ['/news/', '/article/', '/blog/', '/post/', '/page/', '/about/', '/contact/'];\n      if (webPatterns.some(p => pathname.includes(p))) {\n        return { format: 'page', confidence: 'medium', method: 'web-pattern' };\n      }\n\n      return { format: 'page', confidence: 'low', method: 'default' };\n    } catch (e) {\n      return { format: 'page', confidence: 'error', method: 'fallback', error: e.message };\n    }\n  }\n\n  // 4) Her dictionary'yi işle - DUPLICATE DETECTION EKLENDI\n  const results = [];\n  const processedLinks = new Set();\n\n  for (let i = 0; i < dataArray.length; i++) {\n    const item = dataArray[i];\n    \n    if (item && typeof item === 'object' && item.title && item.link) {\n      // Link kontrolü - aynı link varsa atla\n      if (processedLinks.has(item.link)) {\n        continue;\n      }\n\n      processedLinks.add(item.link);\n\n      const classification = await classifyLink(item.link);\n      results.push({\n        json: {\n          title: item.title,\n          link: item.link,\n          format: classification.format,\n          confidence: classification.confidence,\n          detectionMethod: classification.method,\n          metadata: {\n            extension: classification.extension || null,\n            contentType: classification.contentType || null,\n            error: classification.error || null,\n          },\n        },\n      });\n    } else {\n      results.push({\n        json: {\n          title: 'Invalid Format',\n          link: 'N/A',\n          format: 'error',\n          confidence: 'error',\n          detectionMethod: 'validation',\n          metadata: {\n            error: 'Invalid dictionary format - missing title or link',\n            originalData: item,\n          },\n        },\n      });\n    }\n  }\n\n  return results;\n})();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5888,
+        80
+      ],
+      "id": "d5b63aca-c1e9-4bc7-83b8-44c594cd5b90",
+      "name": "Code22",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -7184,
+        80
+      ],
+      "id": "b7665998-1d9a-4c63-b2bb-d284ad10eaac",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list",
+          "cachedResultName": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "titck_reports",
+          "mode": "list",
+          "cachedResultName": "titck_reports"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "title": "={{ $json.title }}",
+            "url": "={{ $json.url }}",
+            "source": "={{ $json.source }}",
+            "content": "={{ $json.content }}",
+            "crawled_date": "={{ $json.date_crawled_dat }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "content",
+              "displayName": "content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "crawled_date",
+              "displayName": "crawled_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b86982ba-3522-429e-a9a6-c9031005435d",
+      "name": "PostgreSQL Kaydet",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -5200,
+        -224
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "15749882-12ed-4a72-8127-4ffa805db0e1",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "Unexpected end of JSON input [line 12]",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "8e2ef015-d09c-457f-b808-2267a7037a43",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "Beklenmeyen format",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "80bfb21c-3c81-4685-8a69-19a81475bce8",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "Code doesn't return items properly",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5664,
+        80
+      ],
+      "id": "b436809e-815e-4c8e-a2ef-8ac4dc193506",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": "={{$prevNode.name === \"If3\"}}"
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -5200,
+        80
+      ],
+      "id": "11bc7ef3-ac23-44bf-9d0c-d2df37bd1572",
+      "name": "Loop Over Items2",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "debe862a-043f-4621-9ebe-5d8079b8f764",
+              "leftValue": "={{ $json.data.json }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4128,
+        304
+      ],
+      "id": "ed65f0d2-8a32-4d3a-bbae-9ba3a2f15e07",
+      "name": "If2"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.link }}",
+        "operation": "getScreenshot",
+        "fullPage": true,
+        "options": {
+          "waitUntil": "networkidle2",
+          "stealth": false,
+          "humanTyping": false,
+          "addContainerArgs": false
+        }
+      },
+      "type": "n8n-nodes-puppeteer.puppeteer",
+      "typeVersion": 1,
+      "position": [
+        -4576,
+        128
+      ],
+      "id": "15515436-278f-46b2-ab1c-2aad0c5b3d4c",
+      "name": "Puppeteer2",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -4784,
+        128
+      ],
+      "id": "84d063d4-22ab-4e83-81c6-e0b1b709a355",
+      "name": "Wait",
+      "webhookId": "4331a265-2b6a-4de9-98fb-e6f691fa718f"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "af940a89-d2b8-477a-a931-bf8aaaa4472b",
+              "leftValue": "={{ $json.format }}",
+              "rightValue": "other",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5456,
+        80
+      ],
+      "id": "9efd90c8-8591-477a-ad6e-c2356a18cf66",
+      "name": "If3",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": "={{$prevNode.name === \"Code18\"}}"
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -3664,
+        320
+      ],
+      "id": "421ac6e1-9620-47ee-a631-060b834ddee3",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text=$input.first().json.extractedText;\nconst url=$('Code18').item.json.url;\nreturn [{\n    json: {\n        extractedText:url+text\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3136,
+        496
+      ],
+      "id": "7400ceeb-85a7-4078-ae1d-08ef81688b95",
+      "name": "Code2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verileri tablo formatında göster\nconst items = $input.all();\n\nif (items.length === 0) {\n  console.log('❌ Hiç veri bulunamadı!');\n  return [{ json: { message: 'Hiç veri yok' } }];\n}\n\nconsole.log('📊 TOPLAM VERİ SAYISI:', items.length);\nconsole.log('\\n🗂️ VERİ LİSTESİ:');\nconsole.log('═'.repeat(120));\n\nitems.forEach((item, index) => {\n  const data = item.json;\n  console.log(`\\n${index + 1}. ID: ${data.id}`);\n  console.log(`   📰 Başlık: ${data.title?.substring(0, 80)}${data.title?.length > 80 ? '...' : ''}`);\n  console.log(`   🌐 Kaynak: ${data.source}`);\n  console.log(`   🔗 URL: ${data.url}`);\n  console.log(`   📅 Tarih: ${data.created_at}`);\n  console.log(`   💭 İçerik: ${data.content_preview}`);\n  console.log('─'.repeat(80));\n});\n\nreturn items;"
+      },
+      "id": "56644938-2c73-4080-b142-e39b6bafc6f5",
+      "name": "📋 Veri Listesi1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5072,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  id,\n  title,\n  source,\n  url,\n  LEFT(content, 100) || '...' as content_preview,\n  crawled_date,\n  created_at\nFROM public.titck_reports \nORDER BY created_at DESC \nLIMIT 50",
+        "options": {}
+      },
+      "id": "6dd71122-40f8-4c1d-904d-dacec2399a75",
+      "name": "👁️ Verileri Görüntüle2",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -5280,
+        864
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  id,\n  title,\n  source,\n  url,\n  content,\n  crawled_date\n\nFROM public.titck_reports \nORDER BY created_at DESC \nLIMIT 50",
+        "options": {}
+      },
+      "id": "39fadb12-446b-418b-b420-32b3fdd6b666",
+      "name": "👁️ Verileri Görüntüle3",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -5280,
+        704
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -4784,
+        -32
+      ],
+      "id": "f4363f45-7ad4-4e33-8f0e-cc0e24fc2efb",
+      "name": "Wait1",
+      "webhookId": "cbbccf20-2593-4591-aa60-f7d90967c5b1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "64275305-a052-411a-9d16-0064d90bebdd",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "Bad request - please check your parameters",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4352,
+        -32
+      ],
+      "id": "80c3ede7-c1e4-47f9-8fc0-c3952bcc42ed",
+      "name": "If4"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.link }}",
+        "options": {
+          "allowUnauthorizedCerts": true,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 45000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -4224,
+        -176
+      ],
+      "id": "3e6fece5-e115-4e71-99c0-e6a5c237391a",
+      "name": "Download PDF2"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mistralAi",
+      "typeVersion": 1,
+      "position": [
+        -4096,
+        -288
+      ],
+      "id": "73ec34f9-ea32-4955-bfb5-f3f9b154cb5c",
+      "name": "Extract text OCR1",
+      "credentials": {
+        "mistralCloudApi": {
+          "name": "Mistral Cloud account 3"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verileri tablo formatında göster\nconst items = $input.all();\n\nif (items.length === 0) {\n  console.log('❌ Hiç veri bulunamadı!');\n  return [{ json: { message: 'Hiç veri yok' } }];\n}\n\nconsole.log('📊 TOPLAM VERİ SAYISI:', items.length);\nconsole.log('\\n🗂️ VERİ LİSTESİ:');\nconsole.log('═'.repeat(120));\n\nitems.forEach((item, index) => {\n  const data = item.json;\n  console.log(`\\n${index + 1}. ID: ${data.id}`);\n  console.log(`   📰 Başlık: ${data.title?.substring(0, 80)}${data.title?.length > 80 ? '...' : ''}`);\n  console.log(`   🌐 Kaynak: ${data.source}`);\n  console.log(`   🔗 URL: ${data.url}`);\n  console.log(`   📅 Tarih: ${data.created_at}`);\n  console.log(`   💭 İçerik: ${data.content_preview}`);\n  console.log('─'.repeat(80));\n});\n\n// İndirme dosyası hazırla\nconst filteredRecords = items.map(item => {\n  const data = item.json;\n  return {\n    title: data.title,\n    source: data.source,\n    url: data.url,\n    content: data.content,\n    crawled_date: data.crawled_date\n  };\n});\n\n// Dosya adı oluştur\nconst timestamp = new Date().toISOString().split('T')[0];\nconst filename = `titck_reports_${timestamp}.json`;\n\nconsole.log('\\n💾 İNDİRME HAZIR!');\nconsole.log(`📁 Dosya adı: ${filename}`);\nconsole.log(`📊 İndirme kayıt sayısı: ${filteredRecords.length}`);\nconsole.log('📋 İndirme içeriği: title, source, url, content, crawled_date');\n\n// Hem görüntüleme hem indirme için return\nreturn [{\n  json: {\n    filename: filename,\n    recordCount: filteredRecords.length,\n    displayData: items.map(item => item.json),\n    downloadReady: true\n  },\n  binary: {\n    data: {\n      data: Buffer.from(JSON.stringify(filteredRecords, null, 2), 'utf8').toString('base64'),\n      mimeType: 'application/json',\n      fileName: filename,\n      fileExtension: 'json'\n    }\n  }\n}];"
+      },
+      "id": "f8c6a8f4-7922-48bc-967a-1c3410e502fa",
+      "name": "indirme",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5072,
+        704
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📈 İstatistikler": {
+      "main": [
+        [
+          {
+            "node": "📊 İstatistik Göster",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗑️ Kayıt Sil": {
+      "main": [
+        [
+          {
+            "node": "✅ Silme Onayı",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "set_url_tarih": {
+      "main": [
+        [
+          {
+            "node": "Message a model1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract text3": {
+      "main": [
+        [
+          {
+            "node": "Aggregate2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "günlük veri otomasyonu1": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract text4": {
+      "main": [
+        [
+          {
+            "node": "If4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Image2": {
+      "main": [
+        [
+          {
+            "node": "Extract text3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code15": {
+      "main": [
+        [
+          {
+            "node": "Edit Image2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code16": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code17": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Image3": {
+      "main": [
+        [
+          {
+            "node": "Code15",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "scrape_url5": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract text5": {
+      "main": [
+        [
+          {
+            "node": "Code2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code18": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate3": {
+      "main": [
+        [
+          {
+            "node": "Code16",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait2": {
+      "main": [
+        [
+          {
+            "node": "Extract text5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model1": {
+      "main": [
+        [
+          {
+            "node": "scrape_url6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "scrape_url6": {
+      "main": [
+        [
+          {
+            "node": "Code20",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Command3": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code20": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items3": {
+      "main": [
+        [
+          {
+            "node": "Code22",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Command3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "scrape_url5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code22": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "set_url_tarih",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL Kaydet": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items2": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL Kaydet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "Code16",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code18",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Puppeteer2": {
+      "main": [
+        [
+          {
+            "node": "Edit Image3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Puppeteer2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If3": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "Aggregate3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Veri Listesi1": {
+      "main": [
+        [
+          {
+            "node": "📈 İstatistikler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "👁️ Verileri Görüntüle2": {
+      "main": [
+        [
+          {
+            "node": "📋 Veri Listesi1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "👁️ Verileri Görüntüle3": {
+      "main": [
+        [
+          {
+            "node": "indirme",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Extract text4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If4": {
+      "main": [
+        [
+          {
+            "node": "Download PDF2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code17",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF2": {
+      "main": [
+        [
+          {
+            "node": "Extract text OCR1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract text OCR1": {
+      "main": [
+        [
+          {
+            "node": "Code17",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
